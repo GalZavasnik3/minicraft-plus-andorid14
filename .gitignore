@@ -1,0 +1,7 @@
+minicraft-plus-android14/.gradle/
+minicraft-plus-android14/.gradle-user/
+minicraft-plus-android14/.android-user/
+minicraft-plus-android14/app/build/
+minicraft-plus-android14/build/
+minicraft-plus-android14/*.apk
+minicraft-plus-android14/debug.keystore

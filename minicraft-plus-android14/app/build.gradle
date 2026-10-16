@@ -1,0 +1,51 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.minicraftplus.android'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'org.minicraftplus.android'
+        minSdk 23
+        targetSdk 34
+        versionCode 6
+        versionName '2.3.0-infdev3-android14.5'
+    }
+
+    signingConfigs {
+        debug {
+            storeFile rootProject.file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+}
+
+// The game creates its touch UI programmatically. Excluding the generated
+// resource compile jar avoids a Windows file-lock issue in this environment.
+afterEvaluate {
+    tasks.withType(JavaCompile).configureEach {
+        classpath = files(classpath.filter { it.name != 'R.jar' })
+    }
+}
