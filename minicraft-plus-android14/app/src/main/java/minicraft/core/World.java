@@ -178,6 +178,20 @@ public class World extends Game {
 	}
 
 	/**
+	 * New worlds derive one deterministic seed per depth from the world seed.
+	 * Loading must use the same sequence so regenerated chunks match the original
+	 * terrain instead of changing after reopening a world.
+	 */
+	public static long getLevelSeed(int depth) {
+		Random levelSeeds = new Random(seed);
+		for (int level = maxLevelDepth; level >= minLevelDepth; level--) {
+			long levelSeed = levelSeeds.nextLong();
+			if (level == depth) return levelSeed;
+		}
+		throw new IllegalArgumentException("Unknown level depth: " + depth);
+	}
+
+	/**
 	 * This method is called when you interact with stairs, this will give you the transition effect. While changeLevel(int) just changes the level.
 	 */
 	public static void scheduleLevelChange(int dir) {
@@ -212,7 +226,9 @@ public class World extends Game {
 		player.x = (player.x >> 4) * 16 + 8; // Sets the player's x coord (to center yourself on the stairs)
 		player.y = (player.y >> 4) * 16 + 8; // Sets the player's y coord (to center yourself on the stairs)
 
-		levels[currentLevel].add(player); // Adds the player to the level.
+		Level targetLevel = levels[currentLevel];
+		targetLevel.prepareForPlayerEntry(player.x >> 4, player.y >> 4);
+		targetLevel.add(player); // Adds the player to the level.
 
 		if (currentLevel == 0) {
 			AchievementsDisplay.setAchievement("minicraft.achievement.lowest_caves", true);

@@ -111,6 +111,13 @@ public class ChunkManager {
 			chunks.get(chunkX).get(chunkY).noise = null;
 	}
 
+	/** Discards a broken saved chunk so the level generator can recreate it. */
+	public void resetChunk(int chunkX, int chunkY) {
+		if (!chunks.containsKey(chunkX))
+			chunks.put(chunkX, new HashMap<>());
+		chunks.get(chunkX).put(chunkY, new Chunk());
+	}
+
 	public void setChunkNoise(int chunkX, int chunkY, LevelNoise noise) {
 		getChunk(chunkX, chunkY).noise = noise;
 	}

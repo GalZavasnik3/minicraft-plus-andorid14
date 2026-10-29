@@ -10,8 +10,8 @@ android {
         applicationId 'org.minicraftplus.android'
         minSdk 23
         targetSdk 34
-        versionCode 6
-        versionName '2.3.0-infdev3-android14.5'
+        versionCode 18
+        versionName '2.0.1'
     }
 
     signingConfigs {
@@ -25,6 +25,14 @@ android {
 
     buildTypes {
         debug {
+            signingConfig signingConfigs.debug
+        }
+        // A separately installable test build. Its package name ends in .dev,
+        // so Android keeps it alongside the normal Minicraft+ application.
+        dev {
+            initWith debug
+            applicationIdSuffix '.v201'
+            versionNameSuffix '-dev'
             signingConfig signingConfigs.debug
         }
         release {
@@ -41,11 +49,20 @@ android {
 
 dependencies {
 }
-
+android.applicationVariants.all { variant ->
+    variant.outputs.all {
+        outputFileName = "Minicraft-${variant.versionName}.apk"
+    }
+}
 // The game creates its touch UI programmatically. Excluding the generated
 // resource compile jar avoids a Windows file-lock issue in this environment.
 afterEvaluate {
     tasks.withType(JavaCompile).configureEach {
         classpath = files(classpath.filter { it.name != 'R.jar' })
+    }
+}
+android.applicationVariants.all { variant ->
+    variant.outputs.all {
+        outputFileName = "Minicraft-${variant.versionName}.apk"
     }
 }

@@ -135,11 +135,12 @@ public class Renderer extends Game {
 		int xScroll = player.x - Screen.w / 2; // Scrolls the screen in the x axis.
 		int yScroll = player.y - (Screen.h - 8) / 2; // Scrolls the screen in the y axis.
 
-		// Stop scrolling if the screen is at the ...
-		// if (xScroll < 0) xScroll = 0; // ...Left border.
-		// if (yScroll < 0) yScroll = 0; // ...Top border.
-		// if (xScroll > (level.w << 4) - Screen.w) xScroll = (level.w << 4) - Screen.w; // ...Right border.
-		// if (yScroll > (level.h << 4) - Screen.h) yScroll = (level.h << 4) - Screen.h; // ...Bottom border.
+		// Keep the camera inside the actual finite level. This prevents the renderer
+		// from exposing ChunkManager's empty placeholder tiles beyond the world edge.
+		int maxXScroll = Math.max(0, (level.w << 4) - Screen.w);
+		int maxYScroll = Math.max(0, (level.h << 4) - Screen.h);
+		xScroll = Math.max(0, Math.min(xScroll, maxXScroll));
+		yScroll = Math.max(0, Math.min(yScroll, maxYScroll));
 		if (currentLevel > 3) { // If the current level is higher than 3 (which only the sky level (and dungeon) is)
 			MinicraftImage cloud = spriteLinker.getSheet(SpriteType.Tile, "cloud_background");
 			for (int y = 0; y < 28; y++)
@@ -152,8 +153,13 @@ public class Renderer extends Game {
 		level.renderBackground(screen, xScroll, yScroll); // Renders current level background
 		level.renderSprites(screen, xScroll, yScroll); // Renders level sprites on screen
 
-		// This creates the darkness in the caves
-		if ((currentLevel != 3 || Updater.tickCount < Updater.dayLength / 4 || Updater.tickCount > Updater.dayLength / 2) && !isMode("minicraft.settings.mode.creative")) {
+		// The gem/lava level is naturally lit by lava across the whole cave. Running
+		// the per-pixel darkness and hundreds of lava light sources there wastes a
+		// large part of the mobile frame budget, so render it full-bright instead.
+		boolean naturallyLitLavaLevel = currentLevel == World.lvlIdx(-3);
+		if (!naturallyLitLavaLevel
+			&& (currentLevel != 3 || Updater.tickCount < Updater.dayLength / 4 || Updater.tickCount > Updater.dayLength / 2)
+			&& !isMode("minicraft.settings.mode.creative")) {
 			int brightnessMultiplier = player.potioneffects.containsKey(PotionType.Light) ? 12 : 8; // Brightens all light sources by a factor of 1.5 when the player has the Light potion effect. (8 above is normal)
 			level.renderLight(screen, xScroll, yScroll, brightnessMultiplier); // Finds (and renders) all the light from objects (like the player, lanterns, and lava).
 			screen.overlay(currentLevel, xScroll, yScroll); // Overlays the light screen over the main screen.

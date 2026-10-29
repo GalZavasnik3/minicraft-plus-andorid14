@@ -38,7 +38,8 @@ public class TorchTile extends Tile {
 	}
 
 	public int getLightRadius(Level level, int x, int y) {
-		return 5;
+		// Visible cave light on mobile, while remaining weaker than a normal lantern (9).
+		return 8;
 	}
 
 	public boolean interact(Level level, int xt, int yt, Player player, Item item, Direction attackDir) {

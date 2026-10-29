@@ -17,7 +17,8 @@ public final class Settings {
         options.get("scoretime").setValueVisibility(10, false);
         options.get("scoretime").setValueVisibility(120, false);
         options.put("sound", new BooleanEntry("minicraft.settings.sound", true));
-        options.put("autosave", new BooleanEntry("minicraft.settings.autosave", true));
+        // Kept for compatibility with existing worlds; the Android port only saves manually.
+        options.put("autosave", new BooleanEntry("minicraft.settings.autosave", false));
         options.put("hwa", new BooleanEntry("minicraft.settings.opengl_hwa", true));
         options.put("size", new ArrayEntry<>("minicraft.settings.size", 128, 256, 512));
         options.put("theme", new ArrayEntry<>("minicraft.settings.theme", "minicraft.settings.theme.normal", "minicraft.settings.theme.forest", "minicraft.settings.theme.desert", "minicraft.settings.theme.plain", "minicraft.settings.theme.hell"));

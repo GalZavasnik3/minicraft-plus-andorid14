@@ -105,12 +105,14 @@ public class Load {
 	private String location = Game.gameDir;
 
 	private static final String extension = Save.extension;
+	private static final int SAVED_TILES_PER_CHUNK = ChunkManager.CHUNK_SIZE * ChunkManager.CHUNK_SIZE;
 	private float percentInc;
 
 	private ArrayList<String> data;
 	private ArrayList<String> extradata; // These two are changed when loading a new file. (see loadFromFile())
 
 	private Version worldVer;
+	private boolean hasStoredWorldSize;
 
 	private DeathChest deathChest;
 
@@ -626,6 +628,28 @@ public class Load {
 			Settings.set("quests", Boolean.parseBoolean(data.remove(0)));
 			Settings.set("tutorials", Boolean.parseBoolean(data.remove(0)));
 		}
+
+		// World dimensions are trustworthy only when a save was written after the
+		// finite-world edge fix. Older builds could record fake outside chunks and
+		// then persist an inflated size, so those worlds retain Preferences/default.
+		if (!data.isEmpty())
+			ObsidianKnight.beaten = Boolean.parseBoolean(data.remove(0));
+		if (!data.isEmpty()) {
+			try {
+				int savedSize = Integer.parseInt(data.remove(0));
+				if (isSupportedWorldSize(savedSize) && !data.isEmpty()
+					&& Save.WORLD_SIZE_MARKER.equals(data.remove(0))) {
+					Settings.set("size", savedSize);
+					hasStoredWorldSize = true;
+				}
+			} catch (NumberFormatException ignored) {
+				// Keep the configured size if a third-party save has no valid size field.
+			}
+		}
+	}
+
+	private static boolean isSupportedWorldSize(int size) {
+		return size == 128 || size == 256 || size == 512;
 	}
 
 	private void loadMode(String modedata) {
@@ -751,6 +775,10 @@ public class Load {
 		Settings.set("fps", json.getInt("fps"));
 		Settings.set("showquests", json.optBoolean("showquests", true));
 		if (json.has("hwa")) Settings.set("hwa", json.getBoolean("hwa")); // Default should have been configured
+		if (json.has("size")) {
+			int savedSize = json.getInt("size");
+			if (isSupportedWorldSize(savedSize)) Settings.set("size", savedSize);
+		}
 
 		if (partialLoad) return; // Partial loading only loads basic settings.
 
@@ -998,35 +1026,86 @@ public class Load {
 	}
 
 	private void loadWorldInf(String filename) {
-		loadFromFile(location + "/Game" + extension, extradata);
-		long seed = Long.parseLong(extradata.get(1));
+		int worldSize = (int)Settings.get("size");
+		// Old Android builds could save chunks outside a finite world. Their index
+		// coordinates are not reliable evidence that the world was 256 or 512 tiles;
+		// expanding from them can exhaust memory while loading caves. New saves carry
+		// their exact size in Game.mcs, while legacy saves retain the selected size.
+		if (!hasStoredWorldSize && !isSupportedWorldSize(worldSize))
+			worldSize = 128;
+		Settings.set("size", worldSize);
+
 		for (int l = World.maxLevelDepth; l >= World.minLevelDepth; l--) {
 			LoadingDisplay.setMessage(Level.getDepthString(l), false);
 			int lvlidx = World.lvlIdx(l);
-			loadFromFile(location + filename + lvlidx + "/index" + extension, data);
+			try {
+				loadFromFile(location + filename + lvlidx + "/index" + extension, data);
+			} catch (RuntimeException ex) {
+				// A partly written index is recoverable: its terrain will be generated
+				// normally when the player reaches the omitted chunks.
+				Logging.SAVELOAD.warn("Ignoring corrupt saved chunk index for level {}.", l);
+				data.clear();
+			}
 
 			Set<Point> chunks = new HashSet<>();
-			while(data.size() >= 2)
-				chunks.add(new Point(Integer.parseInt(data.remove(0)), Integer.parseInt(data.remove(0))));
+			for (int i = 0; i + 1 < data.size(); i += 2) {
+				try {
+					chunks.add(new Point(Integer.parseInt(data.get(i)), Integer.parseInt(data.get(i + 1))));
+				} catch (NumberFormatException ex) {
+					// A broken index must not prevent the rest of a local world from loading.
+					Logging.SAVELOAD.warn("Ignoring malformed saved chunk coordinates in level {}.", l);
+				}
+			}
+			if (data.size() % 2 != 0)
+				Logging.SAVELOAD.warn("Ignoring an incomplete saved chunk coordinate in level {}.", l);
 
 			ChunkManager map = new ChunkManager();
 			Level parent = World.levels[World.lvlIdx(l + 1)];
-			World.levels[lvlidx] = new Level((int)Settings.get("size"), (int)Settings.get("size"), seed, l, parent, false);
+			World.levels[lvlidx] = new Level(worldSize, worldSize, World.getLevelSeed(l), l, parent, false);
 
 			Level curLevel = World.levels[lvlidx];
 			curLevel.chunkManager = map;
 			for(Point c : chunks) {
-				loadFromFile(location + filename + lvlidx + "/t." + c.x + "." + c.y + extension, data);
-				loadFromFile(location + filename + lvlidx + "/d." + c.x + "." + c.y + extension, extradata);
-				for(int x = 0; x < ChunkManager.CHUNK_SIZE; x++) {
-					for(int y = 0; y < ChunkManager.CHUNK_SIZE; y++) {
-						int tileidx = y + x * ChunkManager.CHUNK_SIZE; // the tiles are saved with x outer loop, and y inner loop, meaning that the list reads down, then right one, rather than right, then down one.
-						int tX = x + c.x * ChunkManager.CHUNK_SIZE, tY = y + c.y * ChunkManager.CHUNK_SIZE;
-						loadTile(worldVer, map, tX, tY, data.get(tileidx), extradata.get(tileidx));
-						map.getTile(tX, tY).onTileSet(curLevel, tX, tY);
+				if (!curLevel.isChunkInsideLevel(c.x, c.y)) continue;
+				try {
+					loadFromFile(location + filename + lvlidx + "/t." + c.x + "." + c.y + extension, data);
+					loadFromFile(location + filename + lvlidx + "/d." + c.x + "." + c.y + extension, extradata);
+					if (data.size() < SAVED_TILES_PER_CHUNK || extradata.size() < SAVED_TILES_PER_CHUNK) {
+						// Saving used to write chunk files directly. If a save was interrupted,
+						// its index can point at a partial file; regenerate just that chunk.
+						Logging.SAVELOAD.warn("Rebuilding incomplete saved chunk ({}, {}) in level {}.", c.x, c.y, l);
+						map.resetChunk(c.x, c.y);
+						continue;
 					}
+
+					// Iron, gold, and gem caves never generate grass. Inspect the saved names
+					// before materializing 4,096 tiles, so old placeholder chunks cannot
+					// create a large allocation spike while B2 is loading.
+					if (l < 0 && l >= -3) {
+						int grassTiles = 0;
+						for (int tileidx = 0; tileidx < SAVED_TILES_PER_CHUNK; tileidx++)
+							if ("Grass".equalsIgnoreCase(data.get(tileidx))) grassTiles++;
+						if (grassTiles * 100 >= SAVED_TILES_PER_CHUNK * 85) {
+							map.resetChunk(c.x, c.y);
+							continue;
+						}
+					}
+
+					for(int x = 0; x < ChunkManager.CHUNK_SIZE; x++) {
+						for(int y = 0; y < ChunkManager.CHUNK_SIZE; y++) {
+							int tileidx = y + x * ChunkManager.CHUNK_SIZE; // the tiles are saved with x outer loop, and y inner loop, meaning that the list reads down, then right one, rather than right, then down one.
+							int tX = x + c.x * ChunkManager.CHUNK_SIZE, tY = y + c.y * ChunkManager.CHUNK_SIZE;
+							loadTile(worldVer, map, tX, tY, data.get(tileidx), extradata.get(tileidx));
+							map.getTile(tX, tY).onTileSet(curLevel, tX, tY);
+						}
+					}
+					map.setChunkStage(c.x, c.y, ChunkManager.CHUNK_STAGE_DONE);
+				} catch (RuntimeException ex) {
+					// Bad tile text, tile data, or an old unknown tile should not make an
+					// otherwise healthy world unloadable. The seeded generator repairs it.
+					Logging.SAVELOAD.warn("Rebuilding corrupt saved chunk ({}, {}) in level {}.", c.x, c.y, l);
+					map.resetChunk(c.x, c.y);
 				}
-				map.setChunkStage(c.x, c.y, ChunkManager.CHUNK_STAGE_DONE);
 			}
 
 			if (Logging.logLevel) curLevel.printTileLocs(Tiles.get("Stairs Down"));
@@ -1035,13 +1114,21 @@ public class Load {
 			/// confirm that there are stairs in all the places that should have stairs.
 			// if there isn't, mark the chunk as needing stairs
 			for (minicraft.gfx.Point p : parent.getMatchingTiles(Tiles.get("Stairs Down"))) {
-				if (curLevel.getTile(p.x, p.y) != Tiles.get("Stairs Up")) {
-					curLevel.chunkManager.setChunkStage(p.x / ChunkManager.CHUNK_SIZE, p.y / ChunkManager.CHUNK_SIZE, ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS);
+				int chunkX = Math.floorDiv(p.x, ChunkManager.CHUNK_SIZE);
+				int chunkY = Math.floorDiv(p.y, ChunkManager.CHUNK_SIZE);
+				// Do not turn a missing chunk into a grass placeholder and then skip
+				// its terrain-generation stages. Only repair already generated chunks.
+				if (curLevel.chunkManager.getChunkStage(chunkX, chunkY) == ChunkManager.CHUNK_STAGE_DONE
+					&& curLevel.getTile(p.x, p.y) != Tiles.get("Stairs Up")) {
+					curLevel.chunkManager.setChunkStage(chunkX, chunkY, ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS);
 				}
 			}
 			for (minicraft.gfx.Point p : curLevel.getMatchingTiles(Tiles.get("Stairs Up"))) {
-				if (parent.getTile(p.x, p.y) != Tiles.get("Stairs Down")) {
-					parent.chunkManager.setChunkStage(p.x / ChunkManager.CHUNK_SIZE, p.y / ChunkManager.CHUNK_SIZE, ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS);
+				int chunkX = Math.floorDiv(p.x, ChunkManager.CHUNK_SIZE);
+				int chunkY = Math.floorDiv(p.y, ChunkManager.CHUNK_SIZE);
+				if (parent.chunkManager.getChunkStage(chunkX, chunkY) == ChunkManager.CHUNK_STAGE_DONE
+					&& parent.getTile(p.x, p.y) != Tiles.get("Stairs Down")) {
+					parent.chunkManager.setChunkStage(chunkX, chunkY, ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS);
 				}
 			}
 		}
@@ -1165,9 +1252,16 @@ public class Load {
 		Level level = World.levels[Game.currentLevel];
 		if (!player.isRemoved())
 			player.remove(); // Removes the user player from the level, in case they would be added twice.
-		if (level != null)
+		if (level != null) {
+			// Earlier Android builds allowed walking into ChunkManager's fake grass
+			// beyond a level edge. Bring affected saves back into the real map before
+			// the new solid boundary rules are applied.
+			player.x = Math.max(8, Math.min(player.x, (level.w << 4) - 9));
+			player.y = Math.max(8, Math.min(player.y, (level.h << 4) - 9));
+			player.spawnx = Math.max(0, Math.min(player.spawnx, level.w - 1));
+			player.spawny = Math.max(0, Math.min(player.spawny, level.h - 1));
 			level.add(player);
-		else
+		} else
 			Logging.SAVELOAD.trace("Game level to add player {} to is null.", player);
 
 		if (worldVer.compareTo(new Version("2.0.4-dev8")) < 0) {

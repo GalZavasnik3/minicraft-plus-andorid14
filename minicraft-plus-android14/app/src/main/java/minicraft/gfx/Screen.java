@@ -15,6 +15,7 @@ public class Screen {
     public static final Point center = new Point(w / 2, h / 2);
     private static final int BIT_MIRROR_X = 1, BIT_MIRROR_Y = 2, MAX_DARK = 128;
     private final int[] pixels = new int[w * h];
+    private final float[] lightLevels = new float[w * h];
     private final HashMap<Point, Integer> lights = new HashMap<>();
     private int xOffset, yOffset;
     public int[] getPixels() { return pixels; }
@@ -89,9 +90,24 @@ public class Screen {
             switch (Updater.getTime()) { case Morning: darkness = Updater.pastDay1 ? (1 - progress) * .8 : 0; break; case Evening: darkness = progress * .8; break; case Night: darkness = .8; break; default: darkness = 0; }
         }
         if (darkness > 0) {
+            // Build light only inside each source's radius. The old version checked
+            // every light against every screen pixel, which becomes expensive at night
+            // and especially in torch-filled caves.
+            Arrays.fill(lightLevels, 0f);
+            for (Map.Entry<Point, Integer> entry : lights.entrySet()) {
+                Point point = entry.getKey(); int radius = entry.getValue(); int radiusSquared = radius * radius;
+                int minX = Math.max(0, point.x - radius), maxX = Math.min(w - 1, point.x + radius);
+                int minY = Math.max(0, point.y - radius), maxY = Math.min(h - 1, point.y + radius);
+                for (int y = minY; y <= maxY; y++) for (int x = minX; x <= maxX; x++) {
+                    int dx = x - point.x, dy = y - point.y, distanceSquared = dx * dx + dy * dy;
+                    if (distanceSquared >= radiusSquared) continue;
+                    float lit = 1f - (float) Math.sqrt(distanceSquared) / radius;
+                    int index = x + y * w;
+                    if (lit > lightLevels[index]) lightLevels[index] = lit;
+                }
+            }
             for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
-                double lit = 0;
-                for (Map.Entry<Point, Integer> entry : lights.entrySet()) { int dx = x - entry.getKey().x, dy = y - entry.getKey().y, radius = entry.getValue(); double d = Math.sqrt(dx * dx + dy * dy); if (d < radius) lit = Math.max(lit, 1 - d / radius); }
+                float lit = lightLevels[x + y * w];
                 double shade = darkness * (1 - lit);
                 int source = pixels[x + y * w]; int red = (int)(((source >> 16) & 255) * (1 - shade)); int green = (int)(((source >> 8) & 255) * (1 - shade)); int blue = (int)((source & 255) * (1 - shade));
                 pixels[x + y * w] = 0xff000000 | red << 16 | green << 8 | blue;

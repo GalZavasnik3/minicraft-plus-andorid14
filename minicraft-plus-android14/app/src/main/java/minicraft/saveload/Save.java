@@ -58,6 +58,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Save {
+	/** Marks a world size recorded after finite-world edge handling was fixed. */
+	public static final String WORLD_SIZE_MARKER = "android14-finite-world-v1";
 
 	public String location = Game.gameDir;
 	File folder;
@@ -221,6 +223,9 @@ public class Save {
 		data.add(String.valueOf(Settings.get("quests")));
 		data.add(String.valueOf(Settings.get("tutorials")));
 		data.add(String.valueOf(ObsidianKnight.beaten));
+		// Infdev chunk saves do not carry dimensions in their level files.
+		data.add(String.valueOf(World.levels[World.lvlIdx(0)].w));
+		data.add(WORLD_SIZE_MARKER);
 		writeToFile(location + filename + extension, data);
 	}
 
@@ -241,6 +246,7 @@ public class Save {
 		json.put("resourcePacks", new JSONArray(ResourcePackDisplay.getLoadedPacks()));
 		json.put("showquests", String.valueOf(Settings.get("showquests")));
 		json.put("hwa", String.valueOf(Settings.get("hwa")));
+		json.put("size", String.valueOf(Settings.get("size")));
 
 		// Save json
 		try {
@@ -301,13 +307,14 @@ public class Save {
 				index.add(String.valueOf(p.x));
 				index.add(String.valueOf(p.y));
 				List<String> tiles = new ArrayList<>();
+				List<String> tileData = new ArrayList<>();
 				for(int x = 0; x < ChunkManager.CHUNK_SIZE; x++)
 					for(int y = 0; y < ChunkManager.CHUNK_SIZE; y++) {
 						int tX = x+p.x*ChunkManager.CHUNK_SIZE, tY = y+p.y*ChunkManager.CHUNK_SIZE;
 						tiles.add(String.valueOf(World.levels[l].getTile(tX, tY).name));
-						data.add(String.valueOf(World.levels[l].getData(tX, tY)));
+						tileData.add(String.valueOf(World.levels[l].getData(tX, tY)));
 					}
-				writeToFile(location + filename + l + "/d." + String.valueOf(p.x) + "." + String.valueOf(p.y) + extension, data);
+				writeToFile(location + filename + l + "/d." + String.valueOf(p.x) + "." + String.valueOf(p.y) + extension, tileData);
 				writeToFile(location + filename + l + "/t." + String.valueOf(p.x) + "." + String.valueOf(p.y) + extension, tiles);
 			}
 			writeToFile(location + filename + l + "/index" + extension, index);

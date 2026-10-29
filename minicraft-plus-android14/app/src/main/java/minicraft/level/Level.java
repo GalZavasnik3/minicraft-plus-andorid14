@@ -490,14 +490,69 @@ public class Level {
 		int cX = Math.floorDiv(tileX, ChunkManager.CHUNK_SIZE), cY = Math.floorDiv(tileY, ChunkManager.CHUNK_SIZE);
 		for (int x = cX - 3; x <= cX + 3; x++)
 			for (int y = cY - 3; y <= cY + 3; y++)
-				if (chunkManager.getChunkStage(x, y) != ChunkManager.CHUNK_STAGE_DONE)
+				if (isChunkInsideLevel(x, y) && chunkManager.getChunkStage(x, y) != ChunkManager.CHUNK_STAGE_DONE)
 					loadChunk(x, y);
 	}
 
+	/** Prepares the visible area before the player is placed on a newly entered level. */
+	public void prepareForPlayerEntry(int tileX, int tileY) {
+		int cX = Math.floorDiv(tileX, ChunkManager.CHUNK_SIZE), cY = Math.floorDiv(tileY, ChunkManager.CHUNK_SIZE);
+		for (int x = cX - 1; x <= cX + 1; x++)
+			for (int y = cY - 1; y <= cY + 1; y++)
+				ensureChunkReady(x, y);
+	}
+
+	/** Returns whether a tile coordinate belongs to this finite level. */
+	public boolean isInsideLevel(int tileX, int tileY) {
+		return tileX >= 0 && tileY >= 0 && tileX < w && tileY < h;
+	}
+
+	/** Returns whether a chunk has at least one tile inside this finite level. */
+	public boolean isChunkInsideLevel(int chunkX, int chunkY) {
+		return chunkX >= 0 && chunkY >= 0 && chunkX * ChunkManager.CHUNK_SIZE < w && chunkY * ChunkManager.CHUNK_SIZE < h;
+	}
+
+	private void ensureChunkReady(int chunkX, int chunkY) {
+		if (!isChunkInsideLevel(chunkX, chunkY)) return;
+		if (isBrokenUndergroundChunk(chunkX, chunkY)) chunkManager.resetChunk(chunkX, chunkY);
+		for (int attempts = 0; attempts < 24 && chunkManager.getChunkStage(chunkX, chunkY) != ChunkManager.CHUNK_STAGE_DONE; attempts++) {
+			if (chunkManager.getChunkStage(chunkX, chunkY) == ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS && parentLevel != null)
+				parentLevel.ensureChunkReady(chunkX, chunkY);
+			loadChunk(chunkX, chunkY);
+		}
+	}
+
+	/**
+	 * Iron, gold, and gem caves never generate grass. Older incremental saves could
+	 * contain a nearly all-grass placeholder plus a small stairs patch, so detect
+	 * and regenerate that invalid chunk before it is shown to the player.
+	 */
+	private boolean isBrokenUndergroundChunk(int chunkX, int chunkY) {
+		if (depth >= 0 || depth < -3 || !isChunkInsideLevel(chunkX, chunkY)
+			|| chunkManager.getChunkStage(chunkX, chunkY) < ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS)
+			return false;
+
+		int startX = chunkX * ChunkManager.CHUNK_SIZE, startY = chunkY * ChunkManager.CHUNK_SIZE;
+		int grassTiles = 0, tileCount = 0;
+		for (int x = startX; x < Math.min(startX + ChunkManager.CHUNK_SIZE, w); x++)
+			for (int y = startY; y < Math.min(startY + ChunkManager.CHUNK_SIZE, h); y++)
+				if (getTile(x, y) == Tiles.get("Grass")) grassTiles++;
+				else tileCount++;
+
+		tileCount += grassTiles;
+		return tileCount > 0 && grassTiles * 100 >= tileCount * 85;
+	}
+
 	public void loadChunk(int x, int y) {
-		if(chunkManager.getChunkStage(x, y) == ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS && parentLevel != null) {
+		if (!isChunkInsideLevel(x, y)) return;
+		if (isBrokenUndergroundChunk(x, y)) chunkManager.resetChunk(x, y);
+
+		if(chunkManager.getChunkStage(x, y) == ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS && parentLevel == null) {
+			chunkManager.setChunkStage(x, y, ChunkManager.CHUNK_STAGE_DONE);
+		}
+		else if(chunkManager.getChunkStage(x, y) == ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS && parentLevel != null) {
 			if(parentLevel.chunkManager.getChunkStage(x, y) < ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS) {
-				LevelGen.advanceChunk(parentLevel.chunkManager, x, y, parentLevel.depth, seed);
+				LevelGen.advanceChunk(parentLevel.chunkManager, x, y, parentLevel.depth, parentLevel.getSeed());
 				return;
 			}
 			int S = ChunkManager.CHUNK_SIZE;
@@ -593,7 +648,8 @@ public class Level {
 		screen.setOffset(xScroll, yScroll);
 		for (int y = yo; y <= h + yo; y++) {
 			for (int x = xo; x <= w + xo; x++) {
-				getTile(x, y).render(screen, this, x, y);
+				if (isInsideLevel(x, y))
+					getTile(x, y).render(screen, this, x, y);
 			}
 		}
 		screen.setOffset(0, 0);
@@ -620,7 +676,7 @@ public class Level {
 		screen.setOffset(xScroll, yScroll);
 
 		// this specifies the maximum radius that the game will stop rendering the light from the source object once off screen
-		int r = 8;
+		int r = Math.max(8, (15 * brightness + 15) >> 4);
 
 		List<Entity> entities = getEntitiesInTiles(xo - r, yo - r, w + xo + r, h + yo + r);
 		for (Entity e : entities) {
@@ -658,7 +714,9 @@ public class Level {
 	}
 
 	public Tile getTile(int x, int y) {
-		return chunkManager.getTile(x, y);
+		// ChunkManager creates missing tiles as grass. Never let an out-of-world
+		// lookup manufacture that phantom terrain: it must behave as a solid border.
+		return isInsideLevel(x, y) ? chunkManager.getTile(x, y) : Tiles.get("Hard Rock");
 	}
 
 	/**
@@ -680,15 +738,17 @@ public class Level {
 	}
 
 	public void setTile(int x, int y, Tile t, int dataVal) {
+		if (!isInsideLevel(x, y)) return;
 		chunkManager.setTile(x, y, t, dataVal);
 		getTile(x, y).onTileSet(this, x, y);
 	}
 
 	public int getData(int x, int y) {
-		return chunkManager.getData(x, y);
+		return isInsideLevel(x, y) ? chunkManager.getData(x, y) : 0;
 	}
 
 	public void setData(int x, int y, int val) {
+		if (!isInsideLevel(x, y)) return;
 		chunkManager.setData(x, y, val);
 	}
 
@@ -1045,11 +1105,17 @@ public class Level {
 
 	public List<Point> getMatchingTiles(TileCheck condition) {
 		List<Point> matches = new ArrayList<>();
-		for (Point p : chunkManager.getAllChunks())
+		for (Point p : chunkManager.getAllChunks()) {
+			// A reset/unstarted chunk has no terrain yet. Reading it here would lazily
+			// fill it with default grass and can turn one damaged save into thousands
+			// of unnecessary tiles during level reconciliation.
+			if (chunkManager.getChunkStage(p.x, p.y) < ChunkManager.CHUNK_STAGE_UNFINISHED_STAIRS)
+				continue;
 			for (int x = p.x * ChunkManager.CHUNK_SIZE; x < (p.x + 1) * ChunkManager.CHUNK_SIZE; x++)
 				for (int y = p.y * ChunkManager.CHUNK_SIZE; y < (p.y + 1) * ChunkManager.CHUNK_SIZE; y++)
-					if (condition.check(getTile(x, y), x, y))
+					if (isInsideLevel(x, y) && condition.check(getTile(x, y), x, y))
 						matches.add(new Point(x, y));
+		}
 
 		return matches;
 	}

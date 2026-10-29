@@ -83,7 +83,6 @@ public class OptionsWorldDisplay extends Display {
 		return new ArrayList<>(Arrays.asList(Settings.getEntry("diff"),
 			Settings.getEntry("fps"),
 			Settings.getEntry("sound"),
-			Settings.getEntry("autosave"),
 			Settings.getEntry("hwa"),
 			new SelectEntry("minicraft.display.options_display.change_key_bindings", () -> Game.setDisplay(new KeyInputDisplay())),
 			new SelectEntry("minicraft.displays.controls", () -> Game.setDisplay(new ControlsDisplay())),
